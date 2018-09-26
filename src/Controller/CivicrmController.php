@@ -8,10 +8,10 @@
 namespace Drupal\civicrm\Controller;
 
 use Drupal\Core\Controller\ControllerBase;
+use Drupal\Core\Render\Markup;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Drupal\civicrm\CivicrmPageState;
 use Drupal\civicrm\Civicrm;
-use Drupal\Component\Utility\SafeMarkup;
 
 class CivicrmController extends ControllerBase {
   protected $civicrm;
@@ -29,23 +29,18 @@ class CivicrmController extends ControllerBase {
     );
   }
 
-  public function main($args, $one, $two, $three, $four, $five) {
-    // $one, $two... $five are optional path components. These default to an empty
-    // string. We append any non-empty path components to the $args array before passing
-    // this to invoke().
-    foreach ([$one, $two, $three, $four, $five] as $optional_arg) {
-      if ($optional_arg) {
-        $args[] = $optional_arg;
-      }
-      else {
-        break;
-      }
+  public function main($args, $extra) {
+    if ($extra) {
+      $args = array_merge($args, explode(':', $extra));
     }
 
     // CiviCRM's Invoke.php has hardwired in the expectation that the query parameter 'q' is being used.
     // We recreate that parameter. Ideally in the future, this data should be passed in explicitly and not tied
     // to an environment variable.
     $_GET['q'] = implode('/', $args);
+
+    // Need to disable the page cache.
+    \Drupal::service('page_cache_kill_switch')->trigger();
 
     // @Todo: Enable CiviCRM's CRM_Core_TemporaryErrorScope::useException() and possibly catch exceptions.
     // At the moment, civicrm doesn't allow exceptions to bubble up to Drupal. See CRM-15022.
@@ -60,25 +55,15 @@ class CivicrmController extends ControllerBase {
 
     // Add CSS, JS, etc. that is required for this page.
     \CRM_Core_Resources::singleton()->addCoreResources();
-    if ($region = \CRM_Core_Region::instance('html-header', FALSE)) {
-      \CRM_Utils_System::addHTMLHead($region->render(''));
-    }
 
     // We set the CiviCRM markup as safe and assume all XSS (an other) issues have already
-    // been taken care of. The SafeMarkup::set() function is stated to be used for
-    // internal use only, so this is a cludge.
+    // been taken care of.
     $build = array(
-      '#markup' => SafeMarkup::format($content, []),
+      '#markup' => Markup::create($content),
+      '#cache' => [
+        'max-age' => 0,
+      ],
     );
-    $counter = 0;
-    foreach ($this->civicrmPageState->getCSS() as $css) {
-      $build['#attached']['html_head'][] = array($css, 'civicrm-controller-' . $counter);
-      $counter++;
-    }
-    foreach ($this->civicrmPageState->getJS() as $js) {
-      $build['#attached']['html_head'][] = array($js, 'civicrm-controller-' . $counter);
-      $counter++;
-    }
 
     // Override default title value if one has been set in the course
     // of calling \CRM_Core_Invoke::invoke().
@@ -86,8 +71,7 @@ class CivicrmController extends ControllerBase {
       // Mark the pageTitle as safe so markup is not escaped by Drupal.
       // This handles the case where, eg. the page title is surrounded by <span id="crm-remove-title" style=display: none">
       // Todo: This is a naughty way to do this. Better to have CiviCRM passing us no markup whatsoever.
-      \Drupal\Component\Utility\SafeMarkup::format($title, []);
-      $build['#title'] = $title;
+      $build['#title'] = Markup::create($title);
     }
 
     return $build;

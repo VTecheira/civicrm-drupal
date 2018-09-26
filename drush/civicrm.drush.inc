@@ -357,10 +357,20 @@ function _civicrm_install_db($dbuser, $dbpass, $dbhost, $dbname,
   $siteRoot = drush_get_context('DRUSH_DRUPAL_SITE_ROOT', FALSE);
 
   $sqlPath = "$modPath/civicrm/sql";
-  $conn = @mysql_connect($dbhost, $dbuser, $dbpass);
-  if (!@mysql_select_db($dbname) &&
-    !@mysql_query("CREATE DATABASE $database")
-  ) {
+
+  if (function_exists('mysqli_connect')) {
+    $dbhostParts = explode(':', $dbhost);
+    $conn = @mysqli_connect($dbhostParts[0], $dbuser, $dbpass, '', isset($dbhostParts[1]) ? $dbhostParts[1] : NULL);
+    $dbOK = ($a = @mysqli_select_db($conn, $dbname)) || ($b = @mysqli_query($conn, "CREATE DATABASE $dbname"));
+  }
+  elseif (function_exists('mysql_connect')) {
+    $conn = @mysql_connect($dbhost, $dbuser, $dbpass);
+    $dbOK = @mysql_select_db($dbname, $conn) || @mysql_query("CREATE DATABASE $dbname", $conn);
+  }
+  else {
+    $dbOK = FALSE;
+  }
+  if (!$dbOK) {
     drush_die(dt('CiviCRM database was not found. Failed to create one.'));
   }
 
@@ -535,9 +545,13 @@ function civicrm_drush_help($section) {
  * Implementation of command 'civicrm-ext-list'
  */
 function drush_civicrm_ext_list() {
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
   try{
-    $result = civicrm_api('extension', 'get', array('version' => 3));
+    $result = civicrm_api3('extension', 'get', array(
+      'options' => array(
+        'limit' => 0,
+      ),
+    ));
     $rows = array(array(dt('App name'), dt('Status')));
     foreach ($result['values'] as $k => $extension_data) {
       $rows[] = array(
@@ -561,7 +575,7 @@ function drush_civicrm_ext_list() {
  * Implementation of command 'civicrm-ext-install'
  */
 function drush_civicrm_ext_install($extension_name) {
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
   try{
     $result = civicrm_api('extension', 'install', array('key' => $extension_name, 'version' => 3));
     if($result['values'] && $result['values'] == 1) {
@@ -583,7 +597,7 @@ function drush_civicrm_ext_install($extension_name) {
  * Implementation of command 'civicrm-ext-disable'
  */
 function drush_civicrm_ext_disable($extension_name) {
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
   try{
     $result = civicrm_api('extension', 'disable', array('key' => $extension_name, 'version' => 3));
     if($result['values'] && $result['values'] == 1) {
@@ -605,7 +619,7 @@ function drush_civicrm_ext_disable($extension_name) {
  * Implementation of command 'civicrm-ext-uninstall'
  */
 function drush_civicrm_ext_uninstall($extension_name) {
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
   try{
     $result = civicrm_api('extension', 'uninstall', array('key' => $extension_name, 'version' => 3));
     if($result['values'] && $result['values'] == 1) {
@@ -1493,7 +1507,7 @@ function drush_civicrm_api() {
       break;
   }
 
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
 
   global $user;
   CRM_Core_BAO_UFMatch::synchronize($user, FALSE, 'Drupal', 'Individual'

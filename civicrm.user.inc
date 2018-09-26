@@ -24,6 +24,13 @@ function civicrm_user_insert(AccountInterface $account) {
   }
   \CRM_Core_BAO_UFMatch::updateContactEmail($contact_id, $account->getEmail());
 
+  // If already in CiviCRM, we don't do then next bit because it will cause
+  // the current request to exit, stopping execution.
+  $config = CRM_Core_Config::singleton();
+  if ($config->inCiviCRM) {
+    return;
+  }
+
   // Process any profile form fields that may have been submitted.
   // In particular, this will pick up form fields that were submitted on the user_registration page.
   \CRM_Core_BAO_UFGroup::getEditHTML($contact_id, '', 2, TRUE, FALSE, NULL, FALSE, $civicrm->getCtype());
@@ -33,7 +40,7 @@ function civicrm_user_insert(AccountInterface $account) {
  * Implements hook_user_update().
  */
 function civicrm_user_update(AccountInterface $account) {
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
 
   // Update primary email address of contact if it has changed.
   $contact_id = \CRM_Core_BAO_UFMatch::getContactId($account->id());
@@ -52,6 +59,6 @@ function civicrm_user_update(AccountInterface $account) {
  * Implements hook_user_delete().
  */
 function civicrm_user_delete(AccountInterface $account) {
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
   \CRM_Core_BAO_UFMatch::deleteUser($account->id());
 }

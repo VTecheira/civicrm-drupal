@@ -10,16 +10,39 @@ require_once 'civicrm.user.inc';
  * Inject arbitrary html into the head region.
  */
 function civicrm_page_attachments(array &$page) {
-  
-  $headers = \Drupal::service('civicrm.page_state')->getHtmlHeaders();
+  // Only do anything if CiviCRM is bootstrapped.
+  global $civicrm_root;
+  if (empty($civicrm_root)) {
+    return;
+  }
+
+  // Always add core styles (even if not on a /civicrm page).
+  CRM_Core_Resources::singleton()->addCoreStyles();
+
+  // Merge CiviCRM stuff into HTML header.
+  if ($region = \CRM_Core_Region::instance('html-header', FALSE)) {
+    \CRM_Utils_System::addHTMLHead($region->render(''));
+  }
+
+  /** @var \Drupal\civicrm\CivicrmPageState $page_state */
+  $page_state = \Drupal::service('civicrm.page_state');
+
+  // Attach CSS and JS.
+  foreach ($page_state->getCSS() as $counter => $css) {
+    $page['#attached']['html_head'][] = array($css, 'civicrm-css-' . $counter);
+  }
+  foreach ($page_state->getJS() as $counter => $js) {
+    $page['#attached']['html_head'][] = array($js, 'civicrm-js-' . $counter);
+  }
+
+  // Any other miscellaneous headers.
+  $headers = $page_state->getHtmlHeaders();
   $markup  = [
     '#type'   => 'markup',
     '#weight' => -99,
-    '#markup' => \Drupal\Component\Utility\SafeMarkup::format($headers, []),
+    '#markup' => \Drupal\Core\Render\Markup::create($headers),
   ];
-  
   $page['#attached']['html_head'][] = [$markup, 'civicrm-headers'];
-
 }
 
 /**
@@ -31,13 +54,18 @@ function civicrm_page_attachments(array &$page) {
 function civicrm_toolbar() {
   $items = [];
 
+  // Always return it with right cache context even if it's empty so that the
+  // permissions can control it's visibility.
+  $items['civicrm'] = [
+    '#cache' => [
+      'contexts' => ['user.permissions'],
+    ],
+  ];
+
   $user = \Drupal::currentUser();
-  if ($user->hasPermission('access civicrm')) {
-    $items['civicrm'] = [
+  if ($user->hasPermission('access CiviCRM')) {
+    $items['civicrm'] += [
       '#type' => 'toolbar_item',
-      '#cache' => [
-        'contexts' => ['user'],
-      ],
       'tab' => [
         '#type' => 'link',
         '#title' => t('CiviCRM'),
@@ -93,8 +121,8 @@ function civicrm_entity_extra_field_info() {
  * We use this hook to add the pseudo-fields we've added in civicrm_entity_extra_field_info()
  * to the user display.
  */
-function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \Drupal\Core\Entity\Display\EntityViewDisplayInterface $display, $view_mode, $langcode) {
-  \Drupal::service('civicrm');
+function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \Drupal\Core\Entity\Display\EntityViewDisplayInterface $display, $view_mode) {
+  \Drupal::service('civicrm')->initialize();
 
   // We need the $contact_id so that we know what data to pull out of Civicrm.
   // And we need the contact_id of the current user ($current_contact_id) so
@@ -106,12 +134,10 @@ function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \
     return;
   }
 
-
   // Contact record link.
   if (($conf = $display->getComponent('civicrm_record')) && $current_user->hasPermission('access CiviCRM') && \CRM_Contact_BAO_Contact_Permission::allow($current_contact_id)) {
     $build['civicrm_record'] = [
       '#type' => 'item',
-      '#title' => t('Contact record'),
       '#weight' => $conf['weight'],
       0 => [
         '#type' => 'link',
@@ -120,6 +146,8 @@ function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \
           'reset' => 1,
           'cid' => $contact_id,
         ]),
+        '#prefix' => '<span class="user-page-link" id="user-page-contact" ><span class="user-page-bullet">&raquo;</span> ',
+        '#suffix' => '</span>',
       ],
     ];
   }
@@ -128,7 +156,6 @@ function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \
   if (($conf = $display->getComponent('civicrm_dashboard')) && $current_user->hasPermission('access Contact Dashboard') && \CRM_Contact_BAO_Contact_Permission::allow($current_contact_id)) {
     $build['civicrm_dashboard'] = [
       '#type' => 'item',
-      '#title' => t('Contact dashboard'),
       '#weight' => $conf['weight'],
       0 => [
         '#type' => 'link',
@@ -137,6 +164,8 @@ function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \
           'reset' => 1,
           'id' => $contact_id,
         ]),
+        '#prefix' => '<span class="user-page-link" id="user-page-dashboard" ><span class="user-page-bullet">&raquo;</span> ',
+        '#suffix' => '</span>',
       ],
     ];
   }
@@ -148,13 +177,16 @@ function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \
       '#weight' => $conf['weight'],
     );
 
+    // We need the CiviCRM core Javascript.
+    CRM_Core_Resources::singleton()->addCoreResources();
+
     foreach (_civicrm_get_profiles($contact_id) as $id => $profile) {
       $html = (new \CRM_Profile_Page_Dynamic($contact_id, $id, NULL))->run();
       $build['civicrm_profiles']["civicrm_profile_{$id}"] = [
-        '#type' => 'item',
+        '#theme' => 'civicrm_user_profile',
         '#title' => $profile['title'],
         0 => [
-          '#markup' => $html,
+          '#markup' => \Drupal\Core\Render\Markup::create($html),
         ],
         // @Todo Check access to this route before displaying the link
         1 => [
@@ -165,6 +197,8 @@ function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \
             'user' => $account->id(),
             'profile' => $id,
           ]),
+          '#prefix' => '<span class="user-page-link" id="user-page-profile-' . substr($profile['title'], 0, 3) . '" ><span class="user-page-bullet">&raquo;</span> ',
+          '#suffix' => '</span>',
         ],
       ];
     }
@@ -178,7 +212,7 @@ function civicrm_user_view(array &$build, \Drupal\user\UserInterface $account, \
  * based on the $contact_id's contact type.
  */
 function _civicrm_get_profiles($contact_id) {
-  \Drupal::service('civicrm');
+  \Drupal::service('civicrm')->initialize();
   $profiles = array();
   $ctype = \CRM_Core_DAO::getFieldValue('CRM_Contact_DAO_Contact', $contact_id, 'contact_type');
 
@@ -203,10 +237,20 @@ function _civicrm_get_profiles($contact_id) {
  */
 function civicrm_form_user_register_form_alter(&$form, &$form_state, $form_id) {
   $civicrm = \Drupal::service('civicrm');
-  $html = \CRM_Core_BAO_UFGroup::getEditHTML(NULL, '', 1, TRUE, FALSE, NULL, FALSE, $civicrm->getCtype());
+  $civicrm->initialize();
+  $html = \CRM_Core_BAO_UFGroup::getEditHTML(NULL, '', NULL, TRUE, TRUE, NULL, FALSE, $civicrm->getCtype());
+
+  // Need to disable the page cache.
+  \Drupal::service('page_cache_kill_switch')->trigger();
+
+  // We need the CiviCRM core Javascript.
+  CRM_Core_Resources::singleton()->addCoreResources();
 
   $form['civicrm_profile_register'] = array(
-    '#markup' => Drupal\Component\Utility\SafeMarkup::format($html, []),
+    '#markup' => \Drupal\Core\Render\Markup::create($html),
+    '#cache' => [
+      'max-age' => 0,
+    ],
   );
   $form['#validate'][] = '_civicrm_user_register_form_validate';
 }
@@ -214,14 +258,13 @@ function civicrm_form_user_register_form_alter(&$form, &$form_state, $form_id) {
 /**
  * Validation function for additional profile form fields attached to user registration form.
  */
-function _civicrm_user_register_form_validate(&$form, &$form_state) {
-  \Drupal::service('civicrm');
+function _civicrm_user_register_form_validate(&$form, \Drupal\Core\Form\FormStateInterface $form_state) {
+  \Drupal::service('civicrm')->initialize();
   $errors = CRM_Core_BAO_UFGroup::isValid(NULL, '', TRUE);
 
   if (is_array($errors)) {
-    $form_builder = \Drupal::formBuilder();
     foreach ($errors as $name => $message) {
-      $form_builder->setErrorByName($name, $form_state, $message);
+      $form_state->setErrorByName($name, $message);
     }
   }
 }
@@ -235,6 +278,10 @@ function civicrm_theme() {
       'render element' => 'elements',
       'template' => 'civicrm-contact',
     ),
+    'civicrm_user_profile' => array(
+      'render element' => 'elements',
+      'template' => 'civicrm-user-profile',
+    )
   );
 }
 

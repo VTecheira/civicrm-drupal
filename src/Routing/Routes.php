@@ -11,7 +11,7 @@ class Routes {
     $collection = new RouteCollection();
 
     // Initialize CiviCRM.
-    \Drupal::service('civicrm');
+    \Drupal::service('civicrm')->initialize();
 
     $items = \CRM_Core_Menu::items();
 
@@ -19,22 +19,18 @@ class Routes {
     // and let each default to empty string.
     foreach ($items as $path => $item) {
       $route = new Route(
-        '/' . $path . '/{one}/{two}/{three}/{four}/{five}',
+        '/' . $path . '/{extra}',
         array(
           '_title' => isset($item['title']) ? $item['title'] : 'CiviCRM',
           '_controller' => 'Drupal\civicrm\Controller\CivicrmController::main',
           'args' => explode('/', $path),
-          'one' => '',
-          'two' => '',
-          'three' => '',
-          'four' => '',
-          'five' => '',
+          'extra' => '',
         ),
         array(
           '_access' => 'TRUE',
+          'extra' => '.+',
         )
       );
-
       $route_name = CivicrmHelper::parseURL($path)['route_name'];
       $collection->add($route_name, $route);
     }
